@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Fee extends Model
 {
@@ -13,4 +14,13 @@ class Fee extends Model
         'status',
         'payment_method'
     ];
+
+    protected $casts = [
+        'amount' => 'float',
+    ];
+
+    public function student(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'student_id');
+    }
 }

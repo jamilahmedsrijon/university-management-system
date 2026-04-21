@@ -2,18 +2,34 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
 use App\Models\Fee;
 use App\Models\User;
-use Illuminate\Support\Facades\Auth;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 
 class FeeController extends Controller
 {
-    // Return current semester
-    private function getCurrentSemester()
+    private function availableSemesters(): array
     {
-        return "Spring 2026";
+        return [
+            'Spring 2026',
+            'Summer 2026',
+            'Fall 2026',
+        ];
+    }
+
+    private function defaultSemester(): string
+    {
+        return $this->availableSemesters()[0];
+    }
+
+    private function resolveSemester(?string $semester): string
+    {
+        return in_array($semester, $this->availableSemesters(), true)
+            ? $semester
+            : $this->defaultSemester();
     }
 
     // Teacher: Create fee with dynamic amount
@@ -21,12 +37,25 @@ class FeeController extends Controller
     {
         // Validate amount
         $request->validate([
-            'amount' => 'required|numeric|min:0'
+            'amount' => 'required|numeric|min:0',
+            'semester' => ['required', 'string', Rule::in($this->availableSemesters())],
         ]);
+
+        $student = User::where('id', $studentId)
+            ->where('role', 'student')
+            ->first();
+
+        if (!$student) {
+            return response()->json([
+                'message' => 'Student not found'
+            ], 404);
+        }
+
+        $semester = $this->resolveSemester($request->semester);
 
         // Check if fee already exists for this semester
         $exists = Fee::where('student_id', $studentId)
-            ->where('semester', $this->getCurrentSemester())
+            ->where('semester', $semester)
             ->first();
 
         if ($exists) {
@@ -37,8 +66,8 @@ class FeeController extends Controller
 
         // Create new fee
         $fee = Fee::create([
-            'student_id' => $studentId,
-            'semester' => $this->getCurrentSemester(),
+            'student_id' => $student->id,
+            'semester' => $semester,
             'amount' => $request->amount,
             'status' => 'unpaid'
         ]);
@@ -49,15 +78,44 @@ class FeeController extends Controller
         ]);
     }
 
-    // Student: View own fee
-    public function myFee()
+    // Teacher: Update fee amount for current semester
+    public function updateFee(Request $request, $id)
     {
+        $request->validate([
+            'amount' => 'required|numeric|min:0'
+        ]);
+
+        $fee = Fee::findOrFail($id);
+
+        if ($fee->status === 'paid') {
+            return response()->json([
+                'message' => 'Paid fee cannot be updated'
+            ], 400);
+        }
+
+        $fee->update([
+            'amount' => $request->amount,
+        ]);
+
+        return response()->json([
+            'message' => 'Fee updated successfully',
+            'data' => $fee->fresh()
+        ]);
+    }
+
+    // Student: View own fee
+    public function myFee(Request $request)
+    {
+        $semester = $this->resolveSemester($request->query('semester'));
+
         $fee = Fee::where('student_id', Auth::id())
-            ->where('semester', $this->getCurrentSemester())
+            ->where('semester', $semester)
             ->first();
 
         return response()->json([
-            'fee' => $fee
+            'fee' => $fee,
+            'selected_semester' => $semester,
+            'available_semesters' => $this->availableSemesters(),
         ]);
     }
 
@@ -75,13 +133,6 @@ class FeeController extends Controller
         if ($fee->student_id !== Auth::id()) {
             return response()->json([
                 'message' => 'Unauthorized'
-            ], 403);
-        }
-
-        // Ensure current semester
-        if ($fee->semester !== $this->getCurrentSemester()) {
-            return response()->json([
-                'message' => 'You can only pay current semester fee'
             ], 403);
         }
 
@@ -128,9 +179,40 @@ class FeeController extends Controller
     }
 
     // Download admit card (only if fee is paid)
-    public function downloadAdmitCard()
+    public function admitCardInfo(Request $request)
     {
-        $semester = $this->getCurrentSemester();
+        $semester = $this->resolveSemester($request->query('semester'));
+
+        $fee = Fee::where('student_id', Auth::id())
+            ->where('semester', $semester)
+            ->where('status', 'paid')
+            ->first();
+
+        if (!$fee) {
+            return response()->json([
+                'message' => 'Please pay semester fee first'
+            ], 403);
+        }
+
+        $student = User::find(Auth::id());
+
+        return response()->json([
+            'admit_card' => [
+                'university' => 'ABC University',
+                'student_name' => $student->name,
+                'student_id' => $student->id,
+                'department' => $student->department,
+                'semester' => $semester,
+                'exam' => "{$semester} Final Exam",
+                'status' => $student->status,
+            ]
+        ]);
+    }
+
+    // Download admit card (only if fee is paid)
+    public function downloadAdmitCard(Request $request)
+    {
+        $semester = $this->resolveSemester($request->query('semester'));
 
         $fee = Fee::where('student_id', Auth::id())
             ->where('semester', $semester)
@@ -150,7 +232,7 @@ class FeeController extends Controller
             'student_name' => $student->name,
             'student_id' => $student->id,
             'semester' => $semester,
-            'exam' => 'Final Exam',
+            'exam' => "{$semester} Final Exam",
             'date' => now()->format('d M Y')
         ];
 

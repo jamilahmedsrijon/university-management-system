@@ -27,7 +27,7 @@ class ResultController extends Controller
         $request->validate([
             'student_id' => 'required|exists:users,id',
             'subject' => 'required|string',
-            'marks' => 'required|integer'
+            'marks' => 'required|integer|min:0|max:100'
         ]);
 
         $gradeData = $this->calculateGrade($request->marks);
@@ -43,6 +43,32 @@ class ResultController extends Controller
         return response()->json([
             'message' => 'Result added successfully',
             'data' => $result
+        ]);
+    }
+
+    // Teacher: Update Result
+    public function update(Request $request, $id)
+    {
+        $request->validate([
+            'student_id' => 'required|exists:users,id',
+            'subject' => 'required|string',
+            'marks' => 'required|integer|min:0|max:100'
+        ]);
+
+        $result = Result::findOrFail($id);
+        $gradeData = $this->calculateGrade($request->marks);
+
+        $result->update([
+            'student_id' => $request->student_id,
+            'subject' => $request->subject,
+            'marks' => $request->marks,
+            'grade' => $gradeData['grade'],
+            'point' => $gradeData['point']
+        ]);
+
+        return response()->json([
+            'message' => 'Result updated successfully',
+            'data' => $result->fresh()
         ]);
     }
 
